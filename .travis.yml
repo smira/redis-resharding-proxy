@@ -3,3 +3,13 @@ language: go
 go:
   - 1.1
   - tip
+
+env:
+  global:
+    - secure: "oafkdBHV4pk7mLSfEGLHX3hyqsLXM6/EVNzD63ChQFLjYYpS/DorFfO65pzXJrW8VpWnYGayNJI5Z3mK/tOPKGTjwoQbM1kJ8/aM14OqdAnM4aAk+rejX7BoEERXNV0bKbCewahWFU/akeBmc6I6onUNo6qoGGNzb++Eg3mQ3+8="
+
+install:
+  - go get github.com/axw/gocov/gocov
+  - go get github.com/mattn/goveralls
+
+script: goveralls -service travis-ci.org $COVERALLS_TOKEN
