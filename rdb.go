@@ -96,6 +96,10 @@ func (filter *RDBFilter) safeRead(n uint32) (result []byte, err error) {
 
 // Accumulate some data that might be either filtered out or passed through
 func (filter *RDBFilter) write(data []byte) {
+	if !filter.shouldKeep {
+		return
+	}
+
 	if filter.saved == nil {
 		filter.saved = make([]byte, len(data), 4096)
 		copy(filter.saved, data)

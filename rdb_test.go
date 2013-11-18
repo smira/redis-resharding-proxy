@@ -78,6 +78,18 @@ func TestFilterRDB(t *testing.T) {
 			expected:    RDBFile2,
 			filter:      func(string) bool { return true },
 		},
+		{
+			description: "10: Old RDB, many types, fully filtered out",
+			rdb:         RDBFile2,
+			expected:    "REDIS0001\xfe\x00\xfe\x06\xfe\x07\xfe\x08\xfe\t\xfe\x0b\xfe\x0e\xfe\x0f\xff",
+			filter:      func(string) bool { return false },
+		},
+		{
+			description: "11: Old RDB, many types, some filtered out",
+			rdb:         RDBFile2,
+			expected:    "REDIS0001\xfe\x00\xfe\x06\x02\x0bv02d_um_109\x01 86756ab85811f6603e59c6d5911c858c\x02\x0bv02e_um_108\x01 86756ab85811f6603e59c6d5911c858c\xfe\x07\xfe\x08\xfe\t\xfe\x0b\xfe\x0e\xfe\x0f\x02\x0bv02e_um_108\x01 86756ab85811f6603e59c6d5911c858c\x02\x0bv02d_um_109\x01 86756ab85811f6603e59c6d5911c858c\xff",
+			filter:      func(key string) bool { return strings.HasPrefix(key, "v02") },
+		},
 	}
 
 	for _, test := range tests {
@@ -115,6 +127,34 @@ func TestFilterRDB(t *testing.T) {
 		}
 	}
 
+}
+
+func runRDBBenchmark(b *testing.B, filter func(string) bool) {
+	for i := 0; i < b.N; i++ {
+		ch := make(chan []byte)
+
+		go FilterRDB(bufio.NewReader(bytes.NewBufferString(RDBFile2)), ch, filter)
+
+		for {
+			_, ok := <-ch
+			if !ok {
+				break
+			}
+		}
+
+	}
+}
+
+func BenchmarkFilterRDBCopy(b *testing.B) {
+    runRDBBenchmark(b, func(string) bool { return true })
+}
+
+func BenchmarkFilterRDBDiscard(b *testing.B) {
+    runRDBBenchmark(b, func(string) bool { return false })
+}
+
+func BenchmarkFilterRDBSome(b *testing.B) {
+    runRDBBenchmark(b, func(key string) bool { return strings.HasPrefix(key, "v02") })
 }
 
 const RDBFile1 string = "REDIS0006\xfe\x00\x00\x03b_1\x04kuku\x00\x03a_1\x04lala\x00\x03b_3\xc3\t@\xb3\x01aa\xe0\xa6\x00\x01aa\xfc\xdb\x82\xb0\\B\x01\x00\x00\x00\x03b_2\r2343545345345\x00\x03a_2\xc0!\xffT\x81\xe9\x86\xcc\x9f\x1f\xc4"
