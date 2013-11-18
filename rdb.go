@@ -348,17 +348,85 @@ func stateSkipString(filter *RDBFilter) (state, error) {
 
 // skip over set or list
 func stateSkipSetOrList(filter *RDBFilter) (state, error) {
-	panic("not implemented")
+	length, _, err := filter.readLength()
+	if err != nil {
+		return nil, err
+	}
+
+	var i uint32
+
+	for i = 0; i < length; i++ {
+		// list element
+		err = filter.skipString()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	filter.keepOrDiscard()
+	return stateOp, nil
 }
 
 // skip over hash
 func stateSkipHash(filter *RDBFilter) (state, error) {
-	panic("not implemented")
+	length, _, err := filter.readLength()
+	if err != nil {
+		return nil, err
+	}
+
+	var i uint32
+
+	for i = 0; i < length; i++ {
+		// key
+		err = filter.skipString()
+		if err != nil {
+			return nil, err
+		}
+
+		// value
+		err = filter.skipString()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	filter.keepOrDiscard()
+	return stateOp, nil
 }
 
-// skip over hash
+// skip over zset
 func stateSkipZset(filter *RDBFilter) (state, error) {
-	panic("not implemented")
+	length, _, err := filter.readLength()
+	if err != nil {
+		return nil, err
+	}
+
+	var i uint32
+
+	for i = 0; i < length; i++ {
+		err = filter.skipString()
+		if err != nil {
+			return nil, err
+		}
+
+		dlen, err := filter.reader.ReadByte()
+		if err != nil {
+			return nil, err
+		}
+		filter.write([]byte{dlen})
+
+		if dlen < 0xFD {
+			double, err := filter.safeRead(uint32(dlen))
+			if err != nil {
+				return nil, err
+			}
+
+			filter.write(double)
+		}
+	}
+
+	filter.keepOrDiscard()
+	return stateOp, nil
 }
 
 // re-calculate crc32
