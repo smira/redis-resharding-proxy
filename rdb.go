@@ -46,7 +46,7 @@ var (
 
 type RDBFilter struct {
 	reader     *bufio.Reader
-	output     chan []byte
+	output     chan<- []byte
 	dissector  func(string) bool
 	hash       uint64
 	saved      []byte
@@ -58,11 +58,12 @@ type RDBFilter struct {
 
 type state func(filter *RDBFilter) (nextstate state, err error)
 
-func FilterRDB(reader *bufio.Reader, output chan []byte, dissector func(string) bool) (err error) {
+// Filter RDB file which is read from reader, sending chunks of data through output channel
+// dissector function is applied to keys to check whether item should be kept or skipped
+func FilterRDB(reader *bufio.Reader, output chan<- []byte, dissector func(string) bool) (err error) {
 	filter := &RDBFilter{reader: reader, output: output, dissector: dissector, shouldKeep: true}
 
 	state := stateMagic
-	defer close(output)
 
 	for state != nil {
 		state, err = state(filter)
