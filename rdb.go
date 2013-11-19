@@ -45,23 +45,32 @@ var (
 )
 
 type RDBFilter struct {
-	reader     *bufio.Reader
-	output     chan<- []byte
-	dissector  func(string) bool
-	hash       uint64
-	saved      []byte
-	rdbVersion int
-	valueState state
-	shouldKeep bool
-	currentOp  byte
+	reader         *bufio.Reader
+	output         chan<- []byte
+	dissector      func(string) bool
+	originalLength int64
+	length         int64
+	hash           uint64
+	saved          []byte
+	rdbVersion     int
+	valueState     state
+	shouldKeep     bool
+	currentOp      byte
 }
 
 type state func(filter *RDBFilter) (nextstate state, err error)
 
 // Filter RDB file which is read from reader, sending chunks of data through output channel
 // dissector function is applied to keys to check whether item should be kept or skipped
-func FilterRDB(reader *bufio.Reader, output chan<- []byte, dissector func(string) bool) (err error) {
-	filter := &RDBFilter{reader: reader, output: output, dissector: dissector, shouldKeep: true}
+// length is original length of RDB file
+func FilterRDB(reader *bufio.Reader, output chan<- []byte, dissector func(string) bool, length int64) (err error) {
+	filter := &RDBFilter{
+		reader:         reader,
+		output:         output,
+		dissector:      dissector,
+		originalLength: length,
+		shouldKeep:     true,
+	}
 
 	state := stateMagic
 
@@ -114,6 +123,7 @@ func (filter *RDBFilter) keepOrDiscard() {
 	if filter.shouldKeep && filter.saved != nil {
 		filter.output <- filter.saved
 		filter.hash = CRC64Update(filter.hash, filter.saved)
+		filter.length += int64(len(filter.saved))
 	}
 	filter.saved = nil
 	filter.shouldKeep = true
@@ -284,7 +294,7 @@ func stateOp(filter *RDBFilter) (state, error) {
 		if filter.rdbVersion > 4 {
 			return stateCRC32, nil
 		} else {
-			return nil, nil
+			return statePadding, nil
 		}
 	default:
 		return nil, ErrUnsupportedOp
@@ -445,6 +455,27 @@ func stateCRC32(filter *RDBFilter) (state, error) {
 
 	binary.LittleEndian.PutUint64(buf, filter.hash)
 	filter.output <- buf
+	filter.length += 8
 
+	return statePadding, nil
+}
+
+// pad RDB with 0xFF up to original length
+func statePadding(filter *RDBFilter) (state, error) {
+	paddingLength := filter.originalLength - filter.length
+
+	for paddingLength > 0 {
+		var padding []byte
+		if paddingLength > 4096 {
+			padding = make([]byte, 4096)
+		} else {
+			padding = make([]byte, paddingLength)
+		}
+		for i, _ := range padding {
+			padding[i] = 0xFF
+		}
+		paddingLength -= int64(len(padding))
+		filter.output <- padding
+	}
 	return nil, nil
 }

@@ -26,7 +26,7 @@ func TestFilterRDB(t *testing.T) {
 		{
 			description:   "2: Simple RDB, filter out b_",
 			rdb:           RDBFile1,
-			expected:      "REDIS0006\xfe\x00\x00\x03a_1\x04lala\x00\x03a_2\xc0!\xff\xad}0`\xa6\xf4\xa1\xab",
+			expected:      "REDIS0006\xfe\x00\x00\x03a_1\x04lala\x00\x03a_2\xc0!\xff\xad}0`\xa6\xf4\xa1\xab" + strings.Repeat("\xff", 56),
 			expectedError: nil,
 			filter:        func(key string) bool { return strings.HasPrefix(key, "a_") },
 		},
@@ -81,13 +81,13 @@ func TestFilterRDB(t *testing.T) {
 		{
 			description: "10: Old RDB, many types, fully filtered out",
 			rdb:         RDBFile2,
-			expected:    "REDIS0001\xfe\x00\xfe\x06\xfe\x07\xfe\x08\xfe\t\xfe\x0b\xfe\x0e\xfe\x0f\xff",
+			expected:    "REDIS0001\xfe\x00\xfe\x06\xfe\x07\xfe\x08\xfe\t\xfe\x0b\xfe\x0e\xfe\x0f\xff" + strings.Repeat("\xff", 1546),
 			filter:      func(string) bool { return false },
 		},
 		{
 			description: "11: Old RDB, many types, some filtered out",
 			rdb:         RDBFile2,
-			expected:    "REDIS0001\xfe\x00\xfe\x06\x02\x0bv02d_um_109\x01 86756ab85811f6603e59c6d5911c858c\x02\x0bv02e_um_108\x01 86756ab85811f6603e59c6d5911c858c\xfe\x07\xfe\x08\xfe\t\xfe\x0b\xfe\x0e\xfe\x0f\x02\x0bv02e_um_108\x01 86756ab85811f6603e59c6d5911c858c\x02\x0bv02d_um_109\x01 86756ab85811f6603e59c6d5911c858c\xff",
+			expected:    "REDIS0001\xfe\x00\xfe\x06\x02\x0bv02d_um_109\x01 86756ab85811f6603e59c6d5911c858c\x02\x0bv02e_um_108\x01 86756ab85811f6603e59c6d5911c858c\xfe\x07\xfe\x08\xfe\t\xfe\x0b\xfe\x0e\xfe\x0f\x02\x0bv02e_um_108\x01 86756ab85811f6603e59c6d5911c858c\x02\x0bv02d_um_109\x01 86756ab85811f6603e59c6d5911c858c\xff" + strings.Repeat("\xff", 1358),
 			filter:      func(key string) bool { return strings.HasPrefix(key, "v02") },
 		},
 	}
@@ -97,7 +97,7 @@ func TestFilterRDB(t *testing.T) {
 		hadError := false
 
 		go func() {
-			err := FilterRDB(bufio.NewReader(bytes.NewBufferString(test.rdb)), ch, test.filter)
+			err := FilterRDB(bufio.NewReader(bytes.NewBufferString(test.rdb)), ch, test.filter, int64(len(test.rdb)))
 			if err != nil {
 				if test.expectedError == nil || test.expectedError != err {
 					t.Errorf("Filtering failed (%s): %v", test.description, err)
@@ -115,8 +115,12 @@ func TestFilterRDB(t *testing.T) {
 			received += string(data)
 		}
 
+		if test.expected != "" && len(received) != len(test.rdb) {
+			t.Errorf("Size of filtered RDB doesn't match original size: %d != %d (test %s)", len(received), len(test.rdb), test.description)
+		}
+
 		if test.expected != "" && test.expected != received {
-			t.Errorf("output not equal to expected: %#v != %#v (test %s)", test.expected, received, test.description)
+			t.Errorf("output not equal to expected: %#v != %#v (test %s)", len(test.expected), len(received), test.description)
 		}
 
 		if test.expectedError != nil && !hadError {
@@ -131,7 +135,7 @@ func runRDBBenchmark(b *testing.B, filter func(string) bool) {
 		ch := make(chan []byte)
 
 		go func() {
-			err := FilterRDB(bufio.NewReader(bytes.NewBufferString(RDBFile2)), ch, filter)
+			err := FilterRDB(bufio.NewReader(bytes.NewBufferString(RDBFile2)), ch, filter, int64(len(RDBFile2)))
 			close(ch)
 			if err != nil {
 				b.Fatalf("Unable to filter RDB: %v", err)
