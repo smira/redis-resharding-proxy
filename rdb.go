@@ -98,7 +98,7 @@ func (filter *RDBFilter) safeRead(n uint32) (result []byte, err error) {
 		}
 		n -= uint32(read)
 		if n > 0 {
-			slice = slice[read : len(slice)-1]
+			slice = slice[read:]
 		}
 	}
 	return
@@ -149,7 +149,7 @@ func (filter *RDBFilter) readLength() (length uint32, encoding int8, err error) 
 			return 0, 0, err
 		}
 		filter.write([]byte{data})
-		length = uint32(((prefix & 0x3F) << 8) | data)
+		length = ((uint32(prefix) & 0x3F) << 8) | uint32(data)
 		return length, -1, nil
 	case rdbLen32Bit:
 		data, err := filter.safeRead(4)
@@ -471,7 +471,7 @@ func statePadding(filter *RDBFilter) (state, error) {
 		} else {
 			padding = make([]byte, paddingLength)
 		}
-		for i, _ := range padding {
+		for i := range padding {
 			padding[i] = 0xFF
 		}
 		paddingLength -= int64(len(padding))
