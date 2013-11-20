@@ -292,7 +292,7 @@ func stateOp(filter *RDBFilter) (state, error) {
 		filter.write([]byte{rdbOpEOF})
 		filter.keepOrDiscard()
 		if filter.rdbVersion > 4 {
-			return stateCRC32, nil
+			return stateCRC64, nil
 		} else {
 			return statePadding, nil
 		}
@@ -444,8 +444,8 @@ func stateSkipZset(filter *RDBFilter) (state, error) {
 	return stateOp, nil
 }
 
-// re-calculate crc32
-func stateCRC32(filter *RDBFilter) (state, error) {
+// re-calculate crc64
+func stateCRC64(filter *RDBFilter) (state, error) {
 	_, err := filter.safeRead(8)
 	if err != nil {
 		return nil, err
