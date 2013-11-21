@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"strconv"
 )
 
@@ -87,20 +88,7 @@ func FilterRDB(reader *bufio.Reader, output chan<- []byte, dissector func(string
 // Read exactly n bytes
 func (filter *RDBFilter) safeRead(n uint32) (result []byte, err error) {
 	result = make([]byte, n)
-	err = nil
-	slice := result
-
-	for n > 0 {
-		var read int
-		read, err = filter.reader.Read(slice)
-		if err != nil {
-			return
-		}
-		n -= uint32(read)
-		if n > 0 {
-			slice = slice[read:]
-		}
-	}
+	_, err = io.ReadFull(filter.reader, result)
 	return
 }
 

@@ -84,7 +84,11 @@ func readRedisCommand(reader *bufio.Reader) (*redisCommand, error) {
 			}
 
 			argument := make([]byte, argSize)
-			io.ReadFull(reader, argument)
+			_, err = io.ReadFull(reader, argument)
+			if err != nil {
+				log.Printf("Failed to read argument: %v\n", err)
+				return nil, err
+			}
 
 			result.raw = append(result.raw, argument...)
 

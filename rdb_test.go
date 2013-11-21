@@ -69,7 +69,7 @@ func TestFilterRDB(t *testing.T) {
 			description:   "8: RDB too short",
 			rdb:           "REDIS00",
 			expected:      "",
-			expectedError: io.EOF,
+			expectedError: io.ErrUnexpectedEOF,
 			filter:        func(string) bool { return true },
 		},
 		{
