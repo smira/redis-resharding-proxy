@@ -22,7 +22,7 @@ var (
 )
 
 const (
-	bufSize       int = 4096
+	bufSize       int = 16384
 	channelBuffer int = 100
 )
 
@@ -153,10 +153,12 @@ func masterConnection(slavechannel chan<- []byte, masterchannel <-chan []byte) {
 		if command.reply != "" || command.command == nil && command.bulkSize == 0 {
 			// passthrough reply & empty command
 			slavechannel <- command.raw
+			slavechannel <- nil
 		} else if len(command.command) == 1 && command.command[0] == "PING" {
 			log.Println("Got PING from master")
 
 			slavechannel <- command.raw
+			slavechannel <- nil
 		} else if command.bulkSize > 0 {
 			// RDB Transfer
 
@@ -177,6 +179,7 @@ func masterConnection(slavechannel chan<- []byte, masterchannel <-chan []byte) {
 			}
 
 			slavechannel <- command.raw
+			slavechannel <- nil
 		}
 
 	}
@@ -184,8 +187,17 @@ func masterConnection(slavechannel chan<- []byte, masterchannel <-chan []byte) {
 
 // Goroutine that handles writing data back to slave
 func slaveWriter(conn net.Conn, slavechannel <-chan []byte) {
+	writer := bufio.NewWriterSize(conn, bufSize)
+
 	for data := range slavechannel {
-		_, err := conn.Write(data)
+		var err error
+
+		if data == nil {
+			err = writer.Flush()
+		} else {
+			_, err = writer.Write(data)
+		}
+
 		if err != nil {
 			log.Printf("Failed to write data to slave: %v\n", err)
 			return
@@ -237,6 +249,7 @@ func slaveReader(conn net.Conn) {
 		} else {
 			// unknown command
 			slavechannel <- []byte("+ERR unknown command\r\n")
+			slavechannel <- nil
 		}
 	}
 }
