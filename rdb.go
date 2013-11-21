@@ -458,6 +458,7 @@ func statePadding(filter *RDBFilter) (state, error) {
 
 	paddingLength := filter.originalLength - filter.length
 	paddingBlock := make([]byte, paddingSize)
+
 	for i := range paddingBlock {
 		paddingBlock[i] = 0xFF
 	}
