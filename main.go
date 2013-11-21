@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -83,20 +84,7 @@ func readRedisCommand(reader *bufio.Reader) (*redisCommand, error) {
 			}
 
 			argument := make([]byte, argSize)
-			slice := argument
-
-			for argSize > 0 {
-				var read int
-				read, err = reader.Read(slice)
-				if err != nil {
-					log.Printf("Failed to read argument: %v\n", err)
-					return nil, err
-				}
-				argSize -= read
-				if argSize > 0 {
-					slice = slice[read:]
-				}
-			}
+			io.ReadFull(reader, argument)
 
 			result.raw = append(result.raw, argument...)
 
