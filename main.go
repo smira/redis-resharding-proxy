@@ -19,7 +19,6 @@ var (
 	proxyPort  int
 	proxyHost  string
 	keyRegexp  *regexp.Regexp
-	cpuProfile string
 )
 
 const (
@@ -251,7 +250,6 @@ func main() {
 	flag.IntVar(&masterPort, "master-port", 6379, "Master Redis port")
 	flag.StringVar(&proxyHost, "proxy-host", "", "Proxy host for listening, default is all hosts")
 	flag.IntVar(&proxyPort, "proxy-port", 6380, "Proxy port for listening")
-	flag.StringVar(&cpuProfile, "cpuprofile", "", "Write cpu profile to file")
 	flag.Parse()
 
 	if flag.NArg() != 1 {
