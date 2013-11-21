@@ -22,8 +22,8 @@ var (
 )
 
 const (
-	bufSize       int = 16384
-	channelBuffer int = 100
+	bufSize       = 16384
+	channelBuffer = 100
 )
 
 type redisCommand struct {
