@@ -6,133 +6,277 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
 var (
-	master_port int
-	master_host string
-	proxy_port  int
-	proxy_host  string
+	masterPort int
+	masterHost string
+	proxyPort  int
+	proxyHost  string
+	keyRegexp  *regexp.Regexp
+	cpuProfile string
 )
 
 const (
-	bufSize int = 4096
+	bufSize       int = 4096
+	channelBuffer int = 100
 )
 
-func init() {
-	flag.StringVar(&master_host, "master-host", "localhost", "Master Redis host")
-	flag.IntVar(&master_port, "master-port", 6379, "Master Redis port")
-	flag.StringVar(&proxy_host, "proxy-host", "", "Proxy host for listening, default is all hosts")
-	flag.IntVar(&proxy_port, "proxy-port", 6380, "Proxy port for listening")
-	flag.Parse()
+type redisCommand struct {
+	raw      []byte
+	command  []string
+	reply    string
+	bulkSize int64
 }
 
-func writeRedis(writer *bufio.Writer, reply string) (err error) {
-	_, err = writer.WriteString(reply)
+func readRedisCommand(reader *bufio.Reader) (*redisCommand, error) {
+	header, err := reader.ReadString('\n')
 	if err != nil {
-		return
+		log.Printf("Failed to read command: %v\n", err)
+		return nil, err
 	}
-	err = writer.Flush()
-	return
+
+	if header == "\n" || header == "\r\n" {
+		// empty command
+		return &redisCommand{raw: []byte(header)}, nil
+	}
+
+	if strings.HasPrefix(header, "+") {
+		return &redisCommand{raw: []byte(header), reply: strings.TrimSpace(header[1:])}, nil
+	}
+
+	if strings.HasPrefix(header, "$") {
+		bulkSize, err := strconv.ParseInt(strings.TrimSpace(header[1:]), 10, 64)
+		if err != nil {
+			log.Printf("Unable to decode bulk size: %v\n", err)
+			return nil, err
+		}
+		return &redisCommand{raw: []byte(header), bulkSize: bulkSize}, nil
+	}
+
+	if strings.HasPrefix(header, "*") {
+		cmdSize, err := strconv.Atoi(strings.TrimSpace(header[1:]))
+		if err != nil {
+			log.Printf("Unable to parse command length: %v\n", err)
+			return nil, err
+		}
+
+		result := &redisCommand{raw: []byte(header), command: make([]string, cmdSize)}
+
+		for i := range result.command {
+			header, err = reader.ReadString('\n')
+			if !strings.HasPrefix(header, "$") || err != nil {
+				log.Printf("Failed to read command: %v\n", err)
+				return nil, err
+			}
+
+			result.raw = append(result.raw, []byte(header)...)
+
+			argSize, err := strconv.Atoi(strings.TrimSpace(header[1:]))
+			if err != nil {
+				log.Printf("Unable to parse argument length: %v\n", err)
+				return nil, err
+			}
+
+			argument := make([]byte, argSize)
+			slice := argument
+
+			for argSize > 0 {
+				var read int
+				read, err = reader.Read(slice)
+				if err != nil {
+					log.Printf("Failed to read argument: %v\n", err)
+					return nil, err
+				}
+				argSize -= read
+				if argSize > 0 {
+					slice = slice[read:]
+				}
+			}
+
+			result.raw = append(result.raw, argument...)
+
+			header, err = reader.ReadString('\n')
+			if err != nil {
+				log.Printf("Failed to read argument: %v\n", err)
+				return nil, err
+			}
+
+			result.raw = append(result.raw, []byte(header)...)
+
+			result.command[i] = string(argument)
+		}
+
+		return result, nil
+	}
+
+	return &redisCommand{raw: []byte(header), command: []string{strings.TrimSpace(header)}}, nil
 }
 
-func masterConnection(repchan chan []byte) {
-	defer close(repchan)
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", master_host, master_port))
+// Goroutine that handles writing commands to master
+func masterWriter(conn net.Conn, masterchannel <-chan []byte) {
+	defer conn.Close()
+
+	for data := range masterchannel {
+		_, err := conn.Write(data)
+		if err != nil {
+			log.Printf("Failed to write data to master: %v\n", err)
+			return
+		}
+	}
+}
+
+// Connect to master, request replication and filter it
+func masterConnection(slavechannel chan<- []byte, masterchannel <-chan []byte) {
+	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", masterHost, masterPort))
 	if err != nil {
-		log.Printf("Failed to connect to master: %v", err)
+		log.Printf("Failed to connect to master: %v\n", err)
 		return
 	}
+
+	defer conn.Close()
+	go masterWriter(conn, masterchannel)
 
 	reader := bufio.NewReaderSize(conn, bufSize)
-	writer := bufio.NewWriterSize(conn, bufSize)
 
-	err = writeRedis(writer, "SYNC\r\n")
-	if err != nil {
-		log.Printf("Failed to communicate to master: %v", err)
-		return
+	for {
+		command, err := readRedisCommand(reader)
+		if err != nil {
+			log.Printf("Error while reading from master: %v\n", err)
+			return
+		}
+
+		if command.reply != "" || command.command == nil && command.bulkSize == 0 {
+			// passthrough reply & empty command
+			slavechannel <- command.raw
+		} else if len(command.command) == 1 && command.command[0] == "PING" {
+			log.Println("Got PING from master")
+
+			slavechannel <- command.raw
+		} else if command.bulkSize > 0 {
+			// RDB Transfer
+
+			log.Printf("RDB size: %d\n", command.bulkSize)
+
+			slavechannel <- command.raw
+
+			err = FilterRDB(reader, slavechannel, func(key string) bool { return keyRegexp.FindStringIndex(key) != nil }, command.bulkSize)
+			if err != nil {
+				log.Printf("Unable to read RDB: %v\n", err)
+				return
+			}
+
+			log.Println("RDB filtering finished, filtering commands...")
+		} else {
+			if len(command.command) >= 2 && keyRegexp.FindStringIndex(command.command[1]) == nil {
+				continue
+			}
+
+			slavechannel <- command.raw
+		}
+
 	}
-
-	bulk_header, err := reader.ReadString('\n')
-	if err != nil {
-		log.Printf("Failed to read bulk reply length: %v", err)
-		return
-	}
-
-	if !strings.HasPrefix(bulk_header, "$") {
-		log.Printf("Expected bulk transfer from master, but got: %#v", bulk_header)
-		return
-	}
-
-	rdb_size, err := strconv.Atoi(strings.TrimSpace(bulk_header[1:]))
-
-	log.Printf("RDB size: %d", rdb_size)
 }
 
-func handleConnection(conn net.Conn) {
+// Goroutine that handles writing data back to slave
+func slaveWriter(conn net.Conn, slavechannel <-chan []byte) {
+	for data := range slavechannel {
+		_, err := conn.Write(data)
+		if err != nil {
+			log.Printf("Failed to write data to slave: %v\n", err)
+			return
+		}
+	}
+}
+
+// Read commands from slave
+func slaveReader(conn net.Conn) {
 	defer conn.Close()
 
 	log.Print("Slave connection established from ", conn.RemoteAddr().String())
 
 	reader := bufio.NewReaderSize(conn, bufSize)
-	writer := bufio.NewWriterSize(conn, bufSize)
+
+	// channel for writing to slave
+	slavechannel := make(chan []byte, channelBuffer)
+	defer close(slavechannel)
+
+	// channel for writing to master
+	masterchannel := make(chan []byte, channelBuffer)
+	defer close(masterchannel)
+
+	go slaveWriter(conn, slavechannel)
+	go masterConnection(slavechannel, masterchannel)
 
 	for {
-		command, err := reader.ReadString('\n')
+		command, err := readRedisCommand(reader)
 		if err != nil {
-			log.Printf("Error while reading from slave: %v", err)
+			log.Printf("Error while reading from slave: %v\n", err)
 			return
 		}
 
-		log.Printf("Got command: %#v", command)
+		if command.reply != "" || command.command == nil && command.bulkSize == 0 {
+			// passthrough reply & empty command
+			masterchannel <- command.raw
+		} else if len(command.command) == 1 && command.command[0] == "PING" {
+			log.Println("Got PING from slave")
 
-		switch command {
-		case "PING\r\n":
-			err = writeRedis(writer, "+PONG\r\n")
-			if err != nil {
-				log.Printf("Failed to communicate with slave: %v", err)
-				return
-			}
-		case "SYNC\r\n":
-			// should start SYNC
-			repchan := make(chan []byte, 100)
-			go masterConnection(repchan)
-			for {
-				data := <-repchan
-				_, err = conn.Write(data)
-				if err != nil {
-					log.Printf("Failed to write replication data to slave: %v", err)
-					return
-				}
-			}
-		default:
-			err = writeRedis(writer, "+ERR unknown command\r\n")
-			if err != nil {
-				log.Printf("Failed to communicate with slave: %v", err)
-				return
-			}
+			masterchannel <- command.raw
+		} else if len(command.command) == 1 && command.command[0] == "SYNC" {
+			log.Println("Starting SYNC")
+
+			masterchannel <- command.raw
+		} else if len(command.command) == 3 && command.command[0] == "REPLCONF" && command.command[1] == "ACK" {
+			log.Println("Got ACK from slave")
+
+			masterchannel <- command.raw
+		} else {
+			// unknown command
+			slavechannel <- []byte("+ERR unknown command\r\n")
 		}
 	}
 }
 
 func main() {
-	log.Printf("Redis Resharding Proxy configured for Redis master at %s:%d", master_host, master_port)
-	log.Printf("Waiting for connection from slave at %s:%d", proxy_host, proxy_port)
+	flag.StringVar(&masterHost, "master-host", "localhost", "Master Redis host")
+	flag.IntVar(&masterPort, "master-port", 6379, "Master Redis port")
+	flag.StringVar(&proxyHost, "proxy-host", "", "Proxy host for listening, default is all hosts")
+	flag.IntVar(&proxyPort, "proxy-port", 6380, "Proxy port for listening")
+	flag.StringVar(&cpuProfile, "cpuprofile", "", "Write cpu profile to file")
+	flag.Parse()
+
+	if flag.NArg() != 1 {
+		flag.Usage()
+		fmt.Fprintln(os.Stderr, "Please specify regular expression to match against the Redis keys as the only argument.")
+		os.Exit(1)
+	}
+
+	var err error
+	keyRegexp, err = regexp.Compile(flag.Arg(0))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Wrong format of regular expression: %v", err)
+		os.Exit(1)
+	}
+
+	log.Printf("Redis Resharding Proxy configured for Redis master at %s:%d\n", masterHost, masterPort)
+	log.Printf("Waiting for connection from slave at %s:%d\n", proxyHost, proxyPort)
 
 	// listen for incoming connection from Redis slave
-	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", proxy_host, proxy_port))
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", proxyHost, proxyPort))
 	if err != nil {
-		log.Fatalf("Unable to listen: %v", err)
+		log.Fatalf("Unable to listen: %v\n", err)
 	}
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			log.Printf("Unable to accept: %v", err)
+			log.Printf("Unable to accept: %v\n", err)
 			continue
 		}
 
-		go handleConnection(conn)
+		go slaveReader(conn)
 	}
 }
