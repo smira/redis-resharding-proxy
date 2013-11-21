@@ -64,7 +64,7 @@ Example
 
 First, let's launch master Redis server::
 
-    redis-server -p 6400
+    redis-server --port 6400
 
 And fill it with some data::
 
@@ -79,8 +79,8 @@ And fill it with some data::
 
 Then, let's launch slaves::
 
-    redis-server -p 6410
-    redis-server -p 6420
+    redis-server --port 6410
+    redis-server --port 6420
 
 And resharding proxies::
 
