@@ -454,20 +454,22 @@ func stateCRC64(filter *RDBFilter) (state, error) {
 
 // pad RDB with 0xFF up to original length
 func statePadding(filter *RDBFilter) (state, error) {
+	const paddingSize = 4096
+
 	paddingLength := filter.originalLength - filter.length
+	paddingBlock := make([]byte, paddingSize)
+	for i := range paddingBlock {
+		paddingBlock[i] = 0xFF
+	}
 
 	for paddingLength > 0 {
-		var padding []byte
-		if paddingLength > 4096 {
-			padding = make([]byte, 4096)
+		if paddingLength > paddingSize {
+			filter.output <- paddingBlock
+			paddingLength -= paddingSize
 		} else {
-			padding = make([]byte, paddingLength)
+			filter.output <- paddingBlock[:paddingLength]
+			break
 		}
-		for i := range padding {
-			padding[i] = 0xFF
-		}
-		paddingLength -= int64(len(padding))
-		filter.output <- padding
 	}
 	return nil, nil
 }
