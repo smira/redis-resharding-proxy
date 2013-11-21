@@ -39,12 +39,17 @@ var (
 )
 
 var (
-	ErrWrongSignature       = errors.New("rdb: wrong signature")
-	ErrVersionUnsupported   = errors.New("rdb: version unsupported")
-	ErrUnsupportedOp        = errors.New("rdb: unsupported opcode")
+	// ErrWrongSignature is returned when RDB signature can't be parsed
+	ErrWrongSignature = errors.New("rdb: wrong signature")
+	// ErrVersionUnsupported is returned when RDB version is too high (can't parse)
+	ErrVersionUnsupported = errors.New("rdb: version unsupported")
+	// ErrUnsupportedOp is returned when unsupported operation is encountered in RDB
+	ErrUnsupportedOp = errors.New("rdb: unsupported opcode")
+	// ErrUnsupportedStringEnc is returned when unsupported string encoding is encountered in RDB
 	ErrUnsupportedStringEnc = errors.New("rdb: unsupported string encoding")
 )
 
+// RDBFilter holds internal state of RDB filter while running
 type RDBFilter struct {
 	reader         *bufio.Reader
 	output         chan<- []byte
@@ -61,7 +66,7 @@ type RDBFilter struct {
 
 type state func(filter *RDBFilter) (nextstate state, err error)
 
-// Filter RDB file which is read from reader, sending chunks of data through output channel
+// FilterRDB filters RDB file which is read from reader, sending chunks of data through output channel
 // dissector function is applied to keys to check whether item should be kept or skipped
 // length is original length of RDB file
 func FilterRDB(reader *bufio.Reader, output chan<- []byte, dissector func(string) bool, length int64) (err error) {
@@ -227,11 +232,11 @@ func stateMagic(filter *RDBFilter) (state, error) {
 	}
 	filter.write(signature)
 
-	version_raw, err := filter.safeRead(4)
+	versionRaw, err := filter.safeRead(4)
 	if err != nil {
 		return nil, err
 	}
-	version, err := strconv.Atoi(string(version_raw))
+	version, err := strconv.Atoi(string(versionRaw))
 	if err != nil {
 		return nil, ErrWrongSignature
 	}
@@ -241,7 +246,7 @@ func stateMagic(filter *RDBFilter) (state, error) {
 	}
 
 	filter.rdbVersion = version
-	filter.write(version_raw)
+	filter.write(versionRaw)
 	filter.keepOrDiscard()
 
 	return stateOp, nil
@@ -281,9 +286,8 @@ func stateOp(filter *RDBFilter) (state, error) {
 		filter.keepOrDiscard()
 		if filter.rdbVersion > 4 {
 			return stateCRC64, nil
-		} else {
-			return statePadding, nil
 		}
+		return statePadding, nil
 	default:
 		return nil, ErrUnsupportedOp
 	}
@@ -439,7 +443,7 @@ func stateCRC64(filter *RDBFilter) (state, error) {
 		return nil, err
 	}
 
-	var buf []byte = make([]byte, 8)
+	var buf = make([]byte, 8)
 
 	binary.LittleEndian.PutUint64(buf, filter.hash)
 	filter.output <- buf
