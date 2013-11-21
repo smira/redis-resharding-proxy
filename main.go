@@ -248,7 +248,7 @@ func slaveReader(conn net.Conn) {
 func main() {
 	flag.StringVar(&masterHost, "master-host", "localhost", "Master Redis host")
 	flag.IntVar(&masterPort, "master-port", 6379, "Master Redis port")
-	flag.StringVar(&proxyHost, "proxy-host", "", "Proxy host for listening, default is all hosts")
+	flag.StringVar(&proxyHost, "proxy-host", "", "Proxy listening interface, default is on all interfaces")
 	flag.IntVar(&proxyPort, "proxy-port", 6380, "Proxy port for listening")
 	flag.Parse()
 
