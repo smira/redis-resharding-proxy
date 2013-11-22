@@ -84,8 +84,8 @@ Then, let's launch slaves::
 
 And resharding proxies::
 
-    redis-resharding-proxy -master-port=6400 --proxy-port=6401 '^a.*'
-    redis-resharding-proxy -master-port=6400 --proxy-port=6402 '^b.*'
+    redis-resharding-proxy -master-port=6400 -proxy-port=6401 '^a.*'
+    redis-resharding-proxy -master-port=6400 -proxy-port=6402 '^b.*'
 
 First proxy would pass only keys that start with ``a``, second one only keys that start with ``b``.
 
