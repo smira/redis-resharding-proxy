@@ -443,7 +443,7 @@ func stateCRC64(filter *RDBFilter) (state, error) {
 		return nil, err
 	}
 
-	var buf = make([]byte, 8)
+	buf := make([]byte, 8)
 
 	binary.LittleEndian.PutUint64(buf, filter.hash)
 	filter.output <- buf
