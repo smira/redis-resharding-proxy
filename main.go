@@ -36,8 +36,7 @@ type redisCommand struct {
 func readRedisCommand(reader *bufio.Reader) (*redisCommand, error) {
 	header, err := reader.ReadString('\n')
 	if err != nil {
-		log.Printf("Failed to read command: %v\n", err)
-		return nil, err
+		return nil, fmt.Errorf("Failed to read command: %v", err)
 	}
 
 	if header == "\n" || header == "\r\n" {
@@ -52,8 +51,7 @@ func readRedisCommand(reader *bufio.Reader) (*redisCommand, error) {
 	if strings.HasPrefix(header, "$") {
 		bulkSize, err := strconv.ParseInt(strings.TrimSpace(header[1:]), 10, 64)
 		if err != nil {
-			log.Printf("Unable to decode bulk size: %v\n", err)
-			return nil, err
+			return nil, fmt.Errorf("Unable to decode bulk size: %v", err)
 		}
 		return &redisCommand{raw: []byte(header), bulkSize: bulkSize}, nil
 	}
@@ -61,8 +59,7 @@ func readRedisCommand(reader *bufio.Reader) (*redisCommand, error) {
 	if strings.HasPrefix(header, "*") {
 		cmdSize, err := strconv.Atoi(strings.TrimSpace(header[1:]))
 		if err != nil {
-			log.Printf("Unable to parse command length: %v\n", err)
-			return nil, err
+			return nil, fmt.Errorf("Unable to parse command length: %v", err)
 		}
 
 		result := &redisCommand{raw: []byte(header), command: make([]string, cmdSize)}
@@ -70,31 +67,27 @@ func readRedisCommand(reader *bufio.Reader) (*redisCommand, error) {
 		for i := range result.command {
 			header, err = reader.ReadString('\n')
 			if !strings.HasPrefix(header, "$") || err != nil {
-				log.Printf("Failed to read command: %v\n", err)
-				return nil, err
+				return nil, fmt.Errorf("Failed to read command: %v", err)
 			}
 
 			result.raw = append(result.raw, []byte(header)...)
 
 			argSize, err := strconv.Atoi(strings.TrimSpace(header[1:]))
 			if err != nil {
-				log.Printf("Unable to parse argument length: %v\n", err)
-				return nil, err
+				return nil, fmt.Errorf("Unable to parse argument length: %v", err)
 			}
 
 			argument := make([]byte, argSize)
 			_, err = io.ReadFull(reader, argument)
 			if err != nil {
-				log.Printf("Failed to read argument: %v\n", err)
-				return nil, err
+				return nil, fmt.Errorf("Failed to read argument: %v", err)
 			}
 
 			result.raw = append(result.raw, argument...)
 
 			header, err = reader.ReadString('\n')
 			if err != nil {
-				log.Printf("Failed to read argument: %v\n", err)
-				return nil, err
+				return nil, fmt.Errorf("Failed to read argument: %v", err)
 			}
 
 			result.raw = append(result.raw, []byte(header)...)

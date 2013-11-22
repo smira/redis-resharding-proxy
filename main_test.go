@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"io"
 	"reflect"
 	"testing"
@@ -49,19 +50,25 @@ func TestReadRedisCommand(t *testing.T) {
 			description:   "6: Immediate EOF",
 			input:         "+PONG",
 			expected:      redisCommand{},
-			expectedError: io.EOF,
+			expectedError: fmt.Errorf("Failed to read command: %v", io.EOF),
 		},
 		{
 			description:   "7: EOF in length",
 			input:         "*3\r\n$3",
 			expected:      redisCommand{},
-			expectedError: io.EOF,
+			expectedError: fmt.Errorf("Failed to read command: %v", io.EOF),
 		},
 		{
 			description:   "8: EOF in data",
 			input:         "*3\r\n$3\r\nSE",
 			expected:      redisCommand{},
-			expectedError: io.ErrUnexpectedEOF,
+			expectedError: fmt.Errorf("Failed to read argument: %v", io.ErrUnexpectedEOF),
+		},
+		{
+			description:   "9: Unparsable length",
+			input:         "*x\r\n",
+			expected:      redisCommand{},
+			expectedError: fmt.Errorf("Unable to parse command length: strconv.ParseInt: parsing \"x\": invalid syntax"),
 		},
 	}
 
@@ -70,7 +77,7 @@ func TestReadRedisCommand(t *testing.T) {
 
 		command, err := readRedisCommand(bufio.NewReader(bytes.NewBufferString(test.input)))
 		if err != nil {
-			if test.expectedError == nil || test.expectedError != err {
+			if test.expectedError == nil || test.expectedError.Error() != err.Error() {
 				t.Errorf("Unexpected error: %v (test %s)", err, test.description)
 			}
 		} else if !reflect.DeepEqual(*command, test.expected) {
