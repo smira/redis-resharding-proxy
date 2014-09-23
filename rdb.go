@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 )
@@ -159,23 +160,159 @@ func (filter *RDBFilter) readLength() (length uint32, encoding int8, err error) 
 	panic("never reached")
 }
 
+// Taken from Golly: https://github.com/tav/golly/blob/master/lzf/lzf.go
+// Removed part that gets outputLength from data
+func lzfDecompress(input []byte, outputLength uint32) (output []byte) {
+
+	inputLength := uint32(len(input))
+
+	var backref int64
+	var ctrl, iidx, length, oidx uint32
+
+	output = make([]byte, outputLength, outputLength)
+	iidx = 0
+
+	for iidx < inputLength {
+		// Get the control byte.
+		ctrl = uint32(input[iidx])
+		iidx++
+
+		if ctrl < (1 << 5) {
+			// The control byte indicates a literal reference.
+			ctrl++
+			if oidx+ctrl > outputLength {
+				return nil
+			}
+
+			// Safety check.
+			if iidx+ctrl > inputLength {
+				return nil
+			}
+
+			for {
+				output[oidx] = input[iidx]
+				iidx++
+				oidx++
+				ctrl--
+				if ctrl == 0 {
+					break
+				}
+			}
+		} else {
+			// The control byte indicates a back reference.
+			length = ctrl >> 5
+			backref = int64(oidx - ((ctrl & 31) << 8) - 1)
+
+			// Safety check.
+			if iidx >= inputLength {
+				return nil
+			}
+
+			// It's an extended back reference. Read the extended length before
+			// reading the full back reference location.
+			if length == 7 {
+				length += uint32(input[iidx])
+				iidx++
+				// Safety check.
+				if iidx >= inputLength {
+					return nil
+				}
+			}
+
+			// Put together the full back reference location.
+			backref -= int64(input[iidx])
+			iidx++
+
+			if oidx+length+2 > outputLength {
+				return nil
+			}
+
+			if backref < 0 {
+				return nil
+			}
+
+			output[oidx] = output[backref]
+			oidx++
+			backref++
+			output[oidx] = output[backref]
+			oidx++
+			backref++
+
+			for {
+				output[oidx] = output[backref]
+				oidx++
+				backref++
+				length--
+				if length == 0 {
+					break
+				}
+			}
+
+		}
+	}
+
+	return output
+}
+
 // read string from RDB, only uncompressed version is supported
 func (filter *RDBFilter) readString() (string, error) {
+	var result string
+
 	length, encoding, err := filter.readLength()
 	if err != nil {
 		return "", err
 	}
 
-	if encoding != -1 {
+	switch encoding {
+	// length-prefixed string
+	case -1:
+		data, err := filter.safeRead(length)
+		if err != nil {
+			return "", err
+		}
+		filter.write(data)
+		result = string(data)
+	// integer as string
+	case 0, 1, 2:
+		data, err := filter.safeRead(1 << uint8(encoding))
+		if err != nil {
+			return "", err
+		}
+		filter.write(data)
+
+		var num uint32
+
+		if encoding == 0 {
+			num = uint32(data[0])
+		} else if encoding == 1 {
+			num = uint32(data[0] | (data[1] << 8))
+		} else if encoding == 2 {
+			num = uint32(data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24))
+		}
+
+		result = fmt.Sprintf("%d", num)
+	// compressed string
+	case 3:
+		clength, _, err := filter.readLength()
+		if err != nil {
+			return "", err
+		}
+		length, _, err := filter.readLength()
+		if err != nil {
+			return "", err
+		}
+		data, err := filter.safeRead(clength)
+		if err != nil {
+			return "", err
+		}
+		filter.write(data)
+
+		result = string(lzfDecompress(data, length))
+	default:
 		return "", ErrUnsupportedStringEnc
 	}
 
-	data, err := filter.safeRead(length)
-	if err != nil {
-		return "", err
-	}
-	filter.write(data)
-	return string(data), nil
+	return result, nil
 }
 
 // skip (copy) string from RDB
