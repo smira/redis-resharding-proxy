@@ -285,9 +285,9 @@ func (filter *RDBFilter) readString() (string, error) {
 		if encoding == 0 {
 			num = uint32(data[0])
 		} else if encoding == 1 {
-			num = uint32(data[0] | (data[1] << 8))
+			num = uint32(data[0]) | (uint32(data[1]) << 8)
 		} else if encoding == 2 {
-			num = uint32(data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24))
+			num = uint32(data[0]) | (uint32(data[1]) << 8) | (uint32(data[2]) << 16) | (uint32(data[3]) << 24)
 		}
 
 		result = fmt.Sprintf("%d", num)
